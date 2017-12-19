@@ -4,19 +4,14 @@ var sha256 = require("sha256")
 var bodyParser = require('body-parser')
 const express = require('express')
 const app = express()
-const request = require('request');
+const aSyncRequest = require('request');
+var request = require('sync-request');
 
 app.use(bodyParser.json())
 
 class Blockchain {
     constructor() {
-        this.chain = [{
-            'index': 0,
-            'timestamp': new Date().toLocaleString,
-            'transactions': "empty",
-            'proof': "proof",
-            'previous_hash': "Genesis"
-        }]
+        this.chain = []
         this.current_transactions = []
         this.nodes = []
 
@@ -69,20 +64,11 @@ class Blockchain {
 
     valid_chain(chain) {
         var last_block = chain[0]
-        console.log("-----------------")
-        console.log("chain: " + JSON.stringify(chain))
-        console.log("lb: " + JSON.stringify(last_block))
         var current_index = 1
 
         while (current_index < chain.length) {
 
             var block = chain[current_index]
-            console.log("index: " + current_index)
-            console.log("block: " +  JSON.stringify(block))
-            console.log("last block hash: " + this.hash_block(last_block))
-            console.log("this block previous hash: " + block.previous_hash)
-            console.log("1 " + block.previous_hash)
-            console.log("2 " + this.hash_block(last_block))
             if (block.previous_hash != this.hash_block(last_block)) {
                 return false
             }
@@ -92,45 +78,35 @@ class Blockchain {
             }
             last_block = block
             current_index += 1
-            console.log("test")
         }
         return true
     }
 
     resolve_conflicts() {
+        console.log("1")
         var max_length = this.chain.length
         var myBlockChain = this
         var changed = false
-        this.nodes.forEach(function(element){
-            
-            request(element+"/chain", function (error, response, body) {
-                console.log("ele: " + element)
-                console.log('statusCode:', response && response.statusCode); // Print the response status code if a response was received
-                //console.log('body:', body); // Print the HTML for the Google homepage.
+        var new_chain
+        this.nodes.forEach(function (element) {
+            console.log("why: " + element + '/chain')
+            var res = request('GET', element + '/chain')
+            console.log("2")
+            if (res.statusCode == 200) {
+                var blockchain = JSON.parse(res.getBody().toString('utf8'))
+                var length = blockchain.length
+                var chain = blockchain.chain
 
-                if(response.statusCode == 200){
-                    var blockchain = JSON.parse(response.body)
-                    var length = blockchain.length
-                    console.log("length_ " + length)
-                    var chain = blockchain.chain
+                var y = myBlockChain.valid_chain(chain)
 
-                    console.log("res: " + response.body)
-
-                    console.log("this chain: " + myBlockChain.chain)
-                    console.log("that chain: " + chain)
-
-                    var y = myBlockChain.valid_chain(chain)
-                    console.log("hallo: " + y)
-
-                    if(length > max_length && myBlockChain.valid_chain(chain)){
-                        max_length = length
-                        var new_chain = chain
-                        changed = true
-                        console.log("am i here?")
-                    }
+                if (length > max_length && myBlockChain.valid_chain(chain)) {
+                    max_length = length
+                    new_chain = chain
+                    changed = true
+                    console.log("am i here?")
                 }
-            })
-            
+            }
+
             console.log("testing")
         })
 
@@ -138,6 +114,17 @@ class Blockchain {
         if (changed) {
             console.log("am i ehere2?")
             this.chain = new_chain
+
+            console.log("calling: " + JSON.stringify(this.nodes))
+            this.nodes.forEach(function (element) {
+                aSyncRequest(element + '/nodes/resolve', function (error, response, body) {
+                    console.log("--------start--------")
+                    console.log('error:', error); // Print the error if one occurred
+                    console.log('statusCode:', response && response.statusCode); // Print the response status code if a response was received
+                    console.log('body:', body); // Print the HTML for the Google homepage.
+                    console.log("--------done--------")
+                });
+            })
             return true
         }
         return false
@@ -149,6 +136,8 @@ class Blockchain {
 }
 
 var myBC = new Blockchain()
+
+//var res = request('GET', 'http://localhost:3001/chain')
 
 app.get('/', (req, res) => res.send('Hello World!'))
 
@@ -173,6 +162,21 @@ app.get('/mine', function (req, res) {
     console.log(myBC.chain)
 })
 
+app.get('/createGenesis', function (req, res) {
+    var block = {
+        'index': 0,
+        'timestamp': new Date().toLocaleString,
+        'transactions': "empty",
+        'proof': "proof",
+        'previous_hash': "Genesis"
+    }
+
+    myBC.chain.push(block)
+
+    res.send("Genesis added")
+
+})
+
 app.get('/chain', function (req, res) {
     response = {
         'chain': myBC.chain,
@@ -184,7 +188,7 @@ app.get('/chain', function (req, res) {
 
 app.post('/nodes/register', function (req, res) {
     var nodes = req.body.nodes
-    nodes.forEach(function(element){
+    nodes.forEach(function (element) {
         myBC.register_node(element)
     })
 
@@ -198,8 +202,8 @@ app.post('/nodes/register', function (req, res) {
 
 app.get('/nodes/resolve', function (req, res) {
     replaced = myBC.resolve_conflicts()
-    
-    if(replaced){
+
+    if (replaced) {
         response = {
             'message': 'Our chain was replaced',
             'new_chain': myBC.chain
