@@ -82,52 +82,81 @@ class Blockchain {
         return true
     }
 
+    backtrack_transactions(otherChain){
+        var index = this.chain.length-1
+        var blockAmount = 0
+        var thisBlockchain = this
+        while(index > -1){
+            if(sha256(JSON.stringify(this.chain[index])) == sha256(JSON.stringify(otherChain.chain[index]))){
+                var newIndex = 0
+                var pointer = this.chain.length-1
+                while(newIndex < blockAmount){
+                    var trans = JSON.parse(this.chain[pointer-newIndex].transactions)
+                    trans.forEach(function(element){
+                        thisBlockchain.current_transactions.push(element)
+                    })
+                    console.log("here: " + trans)
+                    console.log("length: " + trans.length)
+                    newIndex+=1
+                }
+                console.log("new trans: " + JSON.stringify(this.current_transactions))
+                return true
+            } else {
+                index -= 1
+                blockAmount +=1
+            }
+        }
+    }
+
     resolve_conflicts() {
-        console.log("1")
         var max_length = this.chain.length
         var myBlockChain = this
         var changed = false
         var new_chain
+        console.log("Making /chain calls too: " + JSON.stringify(this.nodes))
+
         this.nodes.forEach(function (element) {
-            console.log("why: " + element + '/chain')
-            var res = request('GET', element + '/chain')
-            console.log("2")
-            if (res.statusCode == 200) {
-                var blockchain = JSON.parse(res.getBody().toString('utf8'))
-                var length = blockchain.length
-                var chain = blockchain.chain
+            console.log("Calling (async): " + element)
+            aSyncRequest(element + '/chain', function (error, response, body) {
+                if (response.statusCode == 200) {
+                    var blockchain = JSON.parse(body)
+                    var length = blockchain.length
+                    var otherChain = blockchain.chain
 
-                var y = myBlockChain.valid_chain(chain)
+                    var y = myBlockChain.valid_chain(otherChain)
 
-                if (length > max_length && myBlockChain.valid_chain(chain)) {
-                    max_length = length
-                    new_chain = chain
-                    changed = true
-                    console.log("am i here?")
+                    if (length > max_length && myBlockChain.valid_chain(otherChain)) {
+                        console.log("Chain is different")
+
+                        myBlockChain.backtrack_transactions(blockchain)
+
+                        max_length = length
+                        myBlockChain.chain = otherChain
+
+                        console.log("Making /resolve calls too: " + JSON.stringify(this.nodes))
+                        myBlockChain.nodes.forEach(function (element) {
+                            console.log("Calling (async): " + element)
+                            aSyncRequest(element + '/nodes/resolve', function (error, response, body) {
+                                console.log("Recieved async answer from: " + element)
+                            });
+                        })
+                        return true
+
+                    } else {
+                        console.log("Chain is not different")
+                    }
                 }
-            }
-
-            console.log("testing")
-        })
-
-        console.log("what are you? " + changed)
-        if (changed) {
-            console.log("am i ehere2?")
-            this.chain = new_chain
-
-            console.log("calling: " + JSON.stringify(this.nodes))
-            this.nodes.forEach(function (element) {
-                aSyncRequest(element + '/nodes/resolve', function (error, response, body) {
-                    console.log("--------start--------")
-                    console.log('error:', error); // Print the error if one occurred
-                    console.log('statusCode:', response && response.statusCode); // Print the response status code if a response was received
-                    console.log('body:', body); // Print the HTML for the Google homepage.
-                    console.log("--------done--------")
-                });
+                console.log("Recieved async answer from: " + element)
             })
-            return true
-        }
-        return false
+            console.log("No more changes. finishing...")
+            return false
+        })
+    }
+
+    compare(a,b){
+        var combinedInfoA = a.sender + a.recipient + a.amount + ""
+        var combinedInfoB = b.sender + b.recipient + b.amount + ""
+        return combinedInfoA.localeCompare(combinedInfoB)
     }
 
     hash_block(block) {
@@ -158,8 +187,6 @@ app.get('/mine', function (req, res) {
     myBC.new_block(proof, previous_hash)
 
     res.send('Block added!')
-    console.log("-------------------")
-    console.log(myBC.chain)
 })
 
 app.get('/createGenesis', function (req, res) {
@@ -180,7 +207,8 @@ app.get('/createGenesis', function (req, res) {
 app.get('/chain', function (req, res) {
     response = {
         'chain': myBC.chain,
-        'length': myBC.chain.length
+        'length': myBC.chain.length,
+        'transactions': myBC.chain.current_transactions
     }
     res.send(JSON.stringify(response))
 
